@@ -1,4 +1,4 @@
-package adminpanel
+package caddyfile_editor
 
 import (
 	"crypto/subtle"

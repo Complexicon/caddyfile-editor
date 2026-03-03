@@ -1,0 +1,22 @@
+:root {
+	--molpe-primary: #40297e;
+}
+
+body, #app {
+	font-family: "Nunito", sans-serif;
+	margin: 0px;
+	height: 100vh;
+}
+
+::backdrop {
+	background-color: #000000;
+	opacity: 0.5;
+}
+
+.clickable {
+	cursor: pointer;
+}
+
+.square {
+	aspect-ratio: 1/1;
+}

@@ -1,4 +1,4 @@
-module adminpanel
+module github.com/Complexicon/caddyfile-editor
 
 go 1.25.0
 

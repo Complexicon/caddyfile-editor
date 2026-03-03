@@ -1,10 +1,11 @@
 package frontend
 
 import (
-	"adminpanel/app"
 	"embed"
 	"io/fs"
 	"net/http"
+
+	"github.com/Complexicon/caddyfile-editor/app"
 )
 
 //go:generate bun spark/bundler --prod

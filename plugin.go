@@ -1,12 +1,13 @@
 package adminpanel
 
 import (
-	"adminpanel/app"
-	"adminpanel/frontend"
 	"crypto/subtle"
 	"fmt"
 	"net/http"
 	"strings"
+
+	"github.com/Complexicon/caddyfile-editor/app"
+	"github.com/Complexicon/caddyfile-editor/frontend"
 
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"

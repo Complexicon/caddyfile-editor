@@ -4,7 +4,7 @@ import (
 	caddycmd "github.com/caddyserver/caddy/v2/cmd"
 
 	// plug in Caddy modules here
-	_ "adminpanel"
+	_ "github.com/Complexicon/caddyfile-editor"
 
 	_ "github.com/caddyserver/caddy/v2/modules/standard"
 )

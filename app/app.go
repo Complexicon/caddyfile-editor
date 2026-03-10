@@ -8,13 +8,17 @@ import (
 
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/caddyconfig"
+	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 	"github.com/labstack/echo/v4"
 	"github.com/molpeDE/spark/pkg/framework"
 	"go.uber.org/zap"
 )
 
+// todo: global rw mutex? since there can be multiple admin_panels running
+
 type App struct {
-	Log *zap.Logger
+	Log      *zap.Logger
+	ConfPath string
 }
 
 var AppStruct = &App{}
@@ -29,7 +33,13 @@ type AdaptResult struct {
 var ConfigAutosavePath = filepath.Join(caddy.AppConfigDir(), "autosave.Caddyfile")
 
 func (a *App) LastCaddyfile(c echo.Context) (string, error) {
-	content, err := os.ReadFile(ConfigAutosavePath)
+	path := ConfigAutosavePath
+
+	if a.ConfPath != "" {
+		path = a.ConfPath
+	}
+
+	content, err := os.ReadFile(path)
 
 	if err != nil {
 		return "", err
@@ -38,8 +48,8 @@ func (a *App) LastCaddyfile(c echo.Context) (string, error) {
 	return string(content), nil
 }
 
-func (a *App) AdaptCaddyfile(c echo.Context, caddyfile string) (AdaptResult, error) {
-	result, warnings, err := caddyconfig.GetAdapter("caddyfile").Adapt([]byte(caddyfile), nil)
+func (a *App) AdaptCaddyfile(c echo.Context, caddyfile_content string) (AdaptResult, error) {
+	result, warnings, err := caddyconfig.GetAdapter("caddyfile").Adapt([]byte(caddyfile_content), nil)
 
 	out := AdaptResult{
 		Body:     string(result),
@@ -52,11 +62,9 @@ func (a *App) AdaptCaddyfile(c echo.Context, caddyfile string) (AdaptResult, err
 
 		hasValidAdminPanel := false
 
-		/*
-			check if config contains atleast one admin_panel directive
-			that is not commented out, else warn user over possibly losing access
-		*/
-		for line := range strings.SplitSeq(caddyfile, "\n") {
+		// check if config contains atleast one admin_panel directive
+		// that is not commented out, else warn user over possibly losing access
+		for line := range strings.SplitSeq(caddyfile_content, "\n") {
 			if before, _, found := strings.Cut(line, "admin_panel"); found && !strings.ContainsRune(before, '#') {
 				hasValidAdminPanel = true
 				break
@@ -77,14 +85,20 @@ func (a *App) AdaptCaddyfile(c echo.Context, caddyfile string) (AdaptResult, err
 	return out, nil
 }
 
-func (a *App) InstallCaddyfile(c echo.Context, caddyfile string) (bool, error) {
-	adaptationResult, _ := a.AdaptCaddyfile(c, caddyfile)
+func (a *App) InstallCaddyfile(c echo.Context, caddyfile_content string) (bool, error) {
+	adaptationResult, _ := a.AdaptCaddyfile(c, caddyfile_content)
 
 	if adaptationResult.AdaptError != "" {
 		return false, fmt.Errorf("adapt failed: %s", adaptationResult.AdaptError)
 	}
 
-	a.Log.Warn(fmt.Sprintf("installed caddyfile per user request, copy at %s", ConfigAutosavePath))
-	os.WriteFile(ConfigAutosavePath, []byte(caddyfile), os.ModePerm)
+	a.Log.Info("installing caddyfile per user request...")
+	caddyfile_content = string(caddyfile.Format([]byte(caddyfile_content)))
+	os.WriteFile(ConfigAutosavePath, []byte(caddyfile_content), os.ModePerm)
+
+	if a.ConfPath != "" {
+		os.WriteFile(a.ConfPath, []byte(caddyfile_content), os.ModePerm)
+	}
+
 	return true, caddy.Load([]byte(adaptationResult.Body), false)
 }

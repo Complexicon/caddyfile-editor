@@ -31,6 +31,8 @@ export function Monaco({ initContent = '', onChange, bootstrap, language = 'json
             automaticLayout: true,
             language,
             theme,
+            insertSpaces: false, // caddyfiles are indented using tabs
+            tabSize: 4,
         });
 
         editorRef.current = editor;

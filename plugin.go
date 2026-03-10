@@ -4,10 +4,13 @@ import (
 	"crypto/subtle"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/Complexicon/caddyfile-editor/app"
 	"github.com/Complexicon/caddyfile-editor/frontend"
+	"go.uber.org/zap"
 
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
@@ -34,6 +37,7 @@ func init() {
 type Middleware struct {
 	echo              *echo.Echo
 	AdminPasswordHash string `json:"adminPassHash,omitempty"`
+	AuthMethod        string `json:"authMethod,omitempty"`
 }
 
 func (Middleware) CaddyModule() caddy.ModuleInfo {
@@ -50,16 +54,18 @@ func (m *Middleware) Provision(ctx caddy.Context) error {
 
 	e.Use(middleware.Recover())
 
-	e.Use(middleware.BasicAuthWithConfig(middleware.BasicAuthConfig{
-		Realm: "Caddyfile Editor",
-		Validator: func(user, password string, ctx echo.Context) (bool, error) {
-			err := bcrypt.CompareHashAndPassword([]byte(m.AdminPasswordHash), []byte(password))
-			if subtle.ConstantTimeCompare([]byte(user), []byte("admin")) == 1 && err == nil {
-				return true, nil
-			}
-			return false, nil
-		},
-	}))
+	if m.AuthMethod == "bcrypt" {
+		e.Use(middleware.BasicAuthWithConfig(middleware.BasicAuthConfig{
+			Realm: "Caddyfile Editor",
+			Validator: func(user, password string, ctx echo.Context) (bool, error) {
+				err := bcrypt.CompareHashAndPassword([]byte(m.AdminPasswordHash), []byte(password))
+				if subtle.ConstantTimeCompare([]byte(user), []byte("admin")) == 1 && err == nil {
+					return true, nil
+				}
+				return false, nil
+			},
+		}))
+	}
 
 	// serve frontend (either embedded files or dev server depending on build tags)
 	e.GET("/*", echo.WrapHandler(frontend.SPA), middleware.Gzip())
@@ -74,9 +80,49 @@ func (m *Middleware) Provision(ctx caddy.Context) error {
 	return nil
 }
 
+func probeFile(path string) bool {
+	var canRead, canWrite bool
+	if f, err := os.Open(path); err == nil {
+		canRead = true
+		f.Close()
+	}
+
+	if f, err := os.OpenFile(path, os.O_WRONLY, 0); err == nil {
+		canWrite = true
+		f.Close()
+	}
+
+	return canRead && canWrite
+}
+
 func (m *Middleware) Validate() error {
-	if !strings.HasPrefix(m.AdminPasswordHash, "$2") {
-		return fmt.Errorf("not a bcrypt hash")
+
+	// hack since caddy.getLastConfig is not exposed
+	prevWasCfgFlag := false
+	confFile := ""
+	for _, v := range os.Args {
+
+		if prevWasCfgFlag {
+			confFile = v
+			break
+		}
+
+		prevWasCfgFlag = v == "-c" || v == "--config"
+	}
+	if confFile != "" && !filepath.IsAbs(confFile) {
+		confFile, _ = filepath.Abs(confFile)
+	}
+
+	if confFile != "" {
+		if probeFile(confFile) {
+			app.AppStruct.Log.Info("using specified config file as write destination", zap.String("file", confFile))
+			app.AppStruct.ConfPath = confFile
+		} else {
+			app.AppStruct.Log.Warn("specified config file not writable! falling back to cached file", zap.String("file", confFile), zap.String("cachefile", app.ConfigAutosavePath))
+		}
+
+	} else {
+		app.AppStruct.Log.Info("using cache config file as write destination", zap.String("file", app.ConfigAutosavePath))
 	}
 
 	return nil
@@ -94,17 +140,27 @@ func (m *Middleware) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 		return d.ArgErr()
 	}
 
-	if d.Val() != "bcrypt" { // only support bcrypt for now
+	m.AuthMethod = d.Val()
+
+	switch m.AuthMethod {
+	case "bcrypt":
+		if !d.NextArg() {
+			return d.ArgErr()
+		}
+
+		m.AdminPasswordHash = d.Val()
+
+		if !strings.HasPrefix(m.AdminPasswordHash, "$2") {
+			return fmt.Errorf("not a bcrypt hash")
+		}
+
+	case "no_password":
+		break
+	default:
 		return d.ArgErr()
 	}
 
-	if !d.NextArg() {
-		return d.ArgErr()
-	}
-
-	m.AdminPasswordHash = d.Val()
-
-	if m.AdminPasswordHash == "" {
+	if m.AuthMethod == "bcrypt" && m.AdminPasswordHash == "" {
 		return d.ArgErr()
 	}
 

@@ -110,12 +110,6 @@ async function handleCaddyfileImport() {
 	});
 }
 
-function saveConfig(caddyfile: string) {
-	if(confirm('save configuration and reload caddy?')) {
-		client.InstallCaddyfile(caddyfile).catch(alert);
-	}
-}
-
 function App() {
 
 	const currentConfig = useSignal('');
@@ -125,6 +119,14 @@ function App() {
 	useEffect(() => {
 		client.LastCaddyfile().then(v => initContent.value = v).catch(() => void(0));
 	}, []);
+
+	function saveConfig(caddyfile: string) {
+		if(confirm('save configuration and reload caddy?')) {
+			client.InstallCaddyfile(caddyfile)
+			.then(() => client.LastCaddyfile().then(v => editor.current?.setValue(v)).catch(() => void(0)))
+			.catch(alert);
+		}
+	}
 
 	return (
 		<div class="d-flex h-100 justify-content-center align-items-center flex-column">

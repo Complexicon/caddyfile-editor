@@ -2,15 +2,14 @@
   "name": "frontend",
   "private": true,
   "devDependencies": {
-    "@types/bun": "latest",
-    "monaco-editor": "^0.55.1"
+    "@types/bun": "latest"
   },
   "peerDependencies": {
     "typescript": "^5"
   },
   "dependencies": {
+    "monaco-editor": "^0.55.1",
     "@fortawesome/fontawesome-free": "^7.2.0",
-    "@monaco-editor/loader": "^1.7.0",
     "@preact/signals": "^2.8.1",
     "bootstrap": "^5.3.8",
     "deepsignal": "^1.6.0",

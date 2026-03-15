@@ -1,8 +1,11 @@
-import loader from '@monaco-editor/loader';
+// import loader from '@monaco-editor/loader';
+import * as basicMonaco from '@/basic-monaco';
 import type { editor } from 'monaco-editor';
 import { useEffect, useRef } from 'preact/hooks';
 
-export const monaco = (await loader.init()) as typeof import('monaco-editor');
+export const monaco = basicMonaco as typeof import('monaco-editor');
+
+// export const monaco = (await loader.init()) as typeof import('monaco-editor');
 
 type EditorParams = {
     onChange?: (arg: string, editor: editor.IStandaloneCodeEditor) => void,

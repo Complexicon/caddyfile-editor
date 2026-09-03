@@ -8,6 +8,9 @@ type ClientWithSWR<RPC> = {
 };
 
 export default function Client<T extends object>(path = '/'): T & ClientWithSWR<T> {
+
+	path = location.pathname.slice(0,location.pathname.lastIndexOf("/")) + path;
+
 	return new Proxy<T & ClientWithSWR<T>>({} as any, {
 		get(target, p: string, receiver) {
 

@@ -1,6 +1,6 @@
-:root {
-	--molpe-primary: #40297e;
-}
+@import url('bootstrap/dist/css/bootstrap.css');
+@import url('@fortawesome/fontawesome-free/css/all.css');
+
 
 body, #app {
 	font-family: "Nunito", sans-serif;

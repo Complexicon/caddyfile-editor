@@ -2,80 +2,116 @@ package caddyfile_editor
 
 import (
 	"crypto/subtle"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 
-	"github.com/Complexicon/caddyfile-editor/app"
 	"github.com/Complexicon/caddyfile-editor/frontend"
 	"go.uber.org/zap"
+	"golang.org/x/crypto/bcrypt"
 
 	"github.com/caddyserver/caddy/v2"
+	"github.com/caddyserver/caddy/v2/caddyconfig"
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 	"github.com/caddyserver/caddy/v2/caddyconfig/httpcaddyfile"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
-	"golang.org/x/crypto/bcrypt"
-
-	"github.com/labstack/echo/v4"
-	"github.com/labstack/echo/v4/middleware"
 )
 
 func init() {
-	caddy.RegisterModule(Middleware{})
+	caddy.RegisterModule(CaddyfileEditor{})
 	httpcaddyfile.RegisterHandlerDirective("admin_panel", func(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHandler, error) {
-		var m Middleware
+		var m CaddyfileEditor
 		err := m.UnmarshalCaddyfile(h.Dispenser)
 		return m, err
 	})
+	httpcaddyfile.RegisterDirectiveOrder("admin_panel", httpcaddyfile.Before, "respond")
 }
 
 // DOCS HOW2:
 // https://caddyserver.com/docs/extending-caddy
 
-type Middleware struct {
-	echo              *echo.Echo
+type CaddyfileEditor struct {
 	AdminPasswordHash string `json:"adminPassHash,omitempty"`
 	AuthMethod        string `json:"authMethod,omitempty"`
+	log               *zap.Logger
+	confPath          string
+	handler           http.Handler
 }
 
-func (Middleware) CaddyModule() caddy.ModuleInfo {
+func (CaddyfileEditor) CaddyModule() caddy.ModuleInfo {
 	return caddy.ModuleInfo{
 		ID:  "http.handlers.admin_panel",
-		New: func() caddy.Module { return new(Middleware) },
+		New: func() caddy.Module { return new(CaddyfileEditor) },
 	}
 }
 
-func (m *Middleware) Provision(ctx caddy.Context) error {
+func (m *CaddyfileEditor) Provision(ctx caddy.Context) error {
 
-	e := echo.New()
-	e.HideBanner = true
+	m.log = ctx.Logger()
+	mux := http.NewServeMux()
 
-	e.Use(middleware.Recover())
-
-	if m.AuthMethod == "bcrypt" {
-		e.Use(middleware.BasicAuthWithConfig(middleware.BasicAuthConfig{
-			Realm: "Caddyfile Editor",
-			Validator: func(user, password string, ctx echo.Context) (bool, error) {
-				err := bcrypt.CompareHashAndPassword([]byte(m.AdminPasswordHash), []byte(password))
-				if subtle.ConstantTimeCompare([]byte(user), []byte("admin")) == 1 && err == nil {
-					return true, nil
-				}
-				return false, nil
-			},
-		}))
+	fail := func(w http.ResponseWriter, err error) {
+		w.Header().Set("content-type", "text/plain")
+		w.WriteHeader(http.StatusInternalServerError)
+		io.WriteString(w, err.Error())
 	}
 
-	// serve frontend (either embedded files or dev server depending on build tags)
-	e.GET("/*", echo.WrapHandler(frontend.SPA), middleware.Gzip())
+	mux.HandleFunc("POST /install", func(w http.ResponseWriter, r *http.Request) {
+		content, err := io.ReadAll(r.Body)
+		if err != nil {
+			fail(w, err)
+			return
+		}
 
-	// attach RPC endpoints under /rpc
-	backend := e.Group("/rpc")
-	app.AppStruct.Log = ctx.Logger()
-	app.Instance.Attach(backend)
+		if _, err := m.InstallCaddyfile(string(content)); err != nil {
+			fail(w, err)
+			return
+		}
 
-	m.echo = e
+		w.WriteHeader(http.StatusAccepted)
+	})
+
+	mux.HandleFunc("POST /adapt", func(w http.ResponseWriter, r *http.Request) {
+		content, err := io.ReadAll(r.Body)
+		if err != nil {
+			fail(w, err)
+			return
+		}
+
+		if r, err := m.AdaptCaddyfile(string(content)); err != nil {
+			fail(w, err)
+			return
+		} else {
+			w.Header().Set("content-type", "application/json")
+			w.WriteHeader(http.StatusAccepted)
+			json.NewEncoder(w).Encode(r)
+		}
+	})
+
+	mux.HandleFunc("GET /last", func(w http.ResponseWriter, r *http.Request) {
+		caddyfile, err := m.LastCaddyfile()
+
+		if err != nil {
+			fail(w, err)
+			return
+		}
+
+		w.Header().Set("content-type", "text/plain")
+		w.WriteHeader(http.StatusOK)
+		io.WriteString(w, caddyfile)
+	})
+
+	mux.Handle("GET /{path...}", frontend.Serve)
+
+	if m.AuthMethod == "bcrypt" {
+		m.handler = m.basicAuth(mux)
+	} else {
+		m.handler = mux
+	}
 
 	return nil
 }
@@ -95,7 +131,7 @@ func probeFile(path string) bool {
 	return canRead && canWrite
 }
 
-func (m *Middleware) Validate() error {
+func (m *CaddyfileEditor) Validate() error {
 
 	// hack since caddy.getLastConfig is not exposed
 	prevWasCfgFlag := false
@@ -115,25 +151,25 @@ func (m *Middleware) Validate() error {
 
 	if confFile != "" {
 		if probeFile(confFile) {
-			app.AppStruct.Log.Info("using specified config file as write destination", zap.String("file", confFile))
-			app.AppStruct.ConfPath = confFile
+			m.log.Info("using specified config file as write destination", zap.String("file", confFile))
+			m.confPath = confFile
 		} else {
-			app.AppStruct.Log.Warn("specified config file not writable! falling back to cached file", zap.String("file", confFile), zap.String("cachefile", app.ConfigAutosavePath))
+			m.log.Warn("specified config file not writable! falling back to cached file", zap.String("file", confFile), zap.String("cachefile", ConfigAutosavePath))
 		}
 
 	} else {
-		app.AppStruct.Log.Info("using cache config file as write destination", zap.String("file", app.ConfigAutosavePath))
+		m.log.Info("using cache config file as write destination", zap.String("file", ConfigAutosavePath))
 	}
 
 	return nil
 }
 
-func (m Middleware) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
-	m.echo.ServeHTTP(w, r)
+func (m CaddyfileEditor) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
+	m.handler.ServeHTTP(w, r)
 	return nil
 }
 
-func (m *Middleware) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
+func (m *CaddyfileEditor) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 	d.Next()
 
 	if !d.NextArg() {
@@ -168,8 +204,104 @@ func (m *Middleware) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 }
 
 var (
-	_ caddy.Provisioner           = (*Middleware)(nil)
-	_ caddy.Validator             = (*Middleware)(nil)
-	_ caddyhttp.MiddlewareHandler = (*Middleware)(nil)
-	_ caddyfile.Unmarshaler       = (*Middleware)(nil)
+	_ caddy.Provisioner           = (*CaddyfileEditor)(nil)
+	_ caddy.Validator             = (*CaddyfileEditor)(nil)
+	_ caddyhttp.MiddlewareHandler = (*CaddyfileEditor)(nil)
+	_ caddyfile.Unmarshaler       = (*CaddyfileEditor)(nil)
 )
+
+func (c *CaddyfileEditor) basicAuth(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user, pass, ok := r.BasicAuth()
+
+		passOK := bcrypt.CompareHashAndPassword([]byte(c.AdminPasswordHash), []byte(pass)) == nil
+		userOK := subtle.ConstantTimeCompare([]byte(user), []byte("admin")) == 1
+
+		if !ok || !userOK || !passOK {
+			w.Header().Set("WWW-Authenticate", `Basic realm="restricted", charset="UTF-8"`)
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+type AdaptResult struct {
+	Body       string `json:"-"`
+	Warnings   []caddyconfig.Warning
+	AdaptError string `json:",omitempty"`
+}
+
+var ConfigAutosavePath = filepath.Join(caddy.AppConfigDir(), "autosave.Caddyfile")
+
+func (a *CaddyfileEditor) LastCaddyfile() (string, error) {
+	path := ConfigAutosavePath
+
+	if a.confPath != "" {
+		path = a.confPath
+	}
+
+	content, err := os.ReadFile(path)
+
+	if err != nil {
+		return "", err
+	}
+
+	return string(content), nil
+}
+
+func (a *CaddyfileEditor) AdaptCaddyfile(caddyfile_content string) (AdaptResult, error) {
+	result, warnings, err := caddyconfig.GetAdapter("caddyfile").Adapt([]byte(caddyfile_content), nil)
+
+	out := AdaptResult{
+		Body:     string(result),
+		Warnings: warnings,
+	}
+
+	if err != nil {
+		out.AdaptError = err.Error()
+	} else {
+
+		hasValidAdminPanel := false
+
+		// check if config contains atleast one admin_panel directive
+		// that is not commented out, else warn user over possibly losing access
+		for line := range strings.SplitSeq(caddyfile_content, "\n") {
+			if before, _, found := strings.Cut(line, "admin_panel"); found && !strings.ContainsRune(before, '#') {
+				hasValidAdminPanel = true
+				break
+			}
+		}
+
+		if !hasValidAdminPanel {
+			out.Warnings = append(out.Warnings, caddyconfig.Warning{
+				File:      "Caddyfile",
+				Line:      0,
+				Directive: "HACK_WHOLEFILE",
+				Message:   "no valid admin_panel directive present, possible self-lockout if applied!",
+			})
+		}
+
+	}
+
+	return out, nil
+}
+
+func (a *CaddyfileEditor) InstallCaddyfile(caddyfile_content string) (bool, error) {
+	adaptationResult, _ := a.AdaptCaddyfile(caddyfile_content)
+
+	if adaptationResult.AdaptError != "" {
+		return false, fmt.Errorf("adapt failed: %s", adaptationResult.AdaptError)
+	}
+
+	a.log.Info("installing caddyfile per user request...")
+	caddyfile_content = string(caddyfile.Format([]byte(caddyfile_content)))
+	os.WriteFile(ConfigAutosavePath, []byte(caddyfile_content), os.ModePerm)
+
+	if a.confPath != "" {
+		os.WriteFile(a.confPath, []byte(caddyfile_content), os.ModePerm)
+	}
+
+	return true, caddy.Load([]byte(adaptationResult.Body), false)
+}

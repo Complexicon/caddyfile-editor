@@ -1,20 +1,22 @@
+//go:build !debug
+
 package frontend
 
 import (
-	"embed"
-	"io/fs"
+	_ "embed"
 	"net/http"
-
-	"github.com/Complexicon/caddyfile-editor/app"
+	"strconv"
 )
 
-//go:generate bun spark/bundler --prod
-//go:embed all:dist
-var _distEmbed embed.FS
+//go:generate bun build --compile --target=browser index.html --production --outfile=dist.html
+//go:embed dist.html
+var editor []byte
 
-func init() {
-	var subfs, _ = fs.Sub(_distEmbed, "dist")
-	SPA = app.Instance.SPA(subfs.(fs.ReadDirFS))
-}
-
-var SPA http.Handler
+var Serve http.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html")
+	w.Header().Set("Content-Length", strconv.FormatInt(int64(len(editor)), 10))
+	w.WriteHeader(http.StatusOK)
+	if r.Method != "HEAD" {
+		w.Write(editor)
+	}
+})

@@ -64,12 +64,12 @@ http://localhost:4000 {
     caddyfile_editor
 }
 
-# or using authentication
+# or using caddys builtin basic authentication
 
 http://localhost:4001 {
-  	basic_auth {
-		  # Username "Bob", password "hiccup"
-      Bob $2a$14$Zkx19XLiW6VYouLHR5NmfOFU0z2GTNmpkT/5qqR7hx4IjWJPDhjvG
+    basic_auth {
+        # Username "Bob", password "hiccup"
+        Bob $2a$14$Zkx19XLiW6VYouLHR5NmfOFU0z2GTNmpkT/5qqR7hx4IjWJPDhjvG
     }
     caddyfile_editor
 }

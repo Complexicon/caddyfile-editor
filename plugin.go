@@ -1,7 +1,6 @@
 package caddyfile_editor
 
 import (
-	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,7 +11,6 @@ import (
 
 	"github.com/Complexicon/caddyfile-editor/frontend"
 	"go.uber.org/zap"
-	"golang.org/x/crypto/bcrypt"
 
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/caddyconfig"
@@ -21,30 +19,28 @@ import (
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 )
 
+// https://caddyserver.com/docs/extending-caddy
 func init() {
 	caddy.RegisterModule(CaddyfileEditor{})
-	httpcaddyfile.RegisterHandlerDirective("admin_panel", func(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHandler, error) {
-		var m CaddyfileEditor
-		err := m.UnmarshalCaddyfile(h.Dispenser)
-		return m, err
-	})
-	httpcaddyfile.RegisterDirectiveOrder("admin_panel", httpcaddyfile.Before, "respond")
+	httpcaddyfile.RegisterHandlerDirective("caddyfile_editor", func(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHandler, error) { return &CaddyfileEditor{}, nil })
+	httpcaddyfile.RegisterDirectiveOrder("caddyfile_editor", httpcaddyfile.Before, "respond")
 }
-
-// DOCS HOW2:
-// https://caddyserver.com/docs/extending-caddy
 
 type CaddyfileEditor struct {
-	AdminPasswordHash string `json:"adminPassHash,omitempty"`
-	AuthMethod        string `json:"authMethod,omitempty"`
-	log               *zap.Logger
-	confPath          string
-	handler           http.Handler
+	log      *zap.Logger
+	confPath string
+	handler  http.Handler
 }
+
+var (
+	_ caddy.Provisioner           = (*CaddyfileEditor)(nil)
+	_ caddy.Validator             = (*CaddyfileEditor)(nil)
+	_ caddyhttp.MiddlewareHandler = (*CaddyfileEditor)(nil)
+)
 
 func (CaddyfileEditor) CaddyModule() caddy.ModuleInfo {
 	return caddy.ModuleInfo{
-		ID:  "http.handlers.admin_panel",
+		ID:  "http.handlers.caddyfile_editor",
 		New: func() caddy.Module { return new(CaddyfileEditor) },
 	}
 }
@@ -107,11 +103,7 @@ func (m *CaddyfileEditor) Provision(ctx caddy.Context) error {
 
 	mux.Handle("GET /{path...}", frontend.Serve)
 
-	if m.AuthMethod == "bcrypt" {
-		m.handler = m.basicAuth(mux)
-	} else {
-		m.handler = mux
-	}
+	m.handler = mux
 
 	return nil
 }
@@ -164,67 +156,9 @@ func (m *CaddyfileEditor) Validate() error {
 	return nil
 }
 
-func (m CaddyfileEditor) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
+func (m *CaddyfileEditor) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
 	m.handler.ServeHTTP(w, r)
 	return nil
-}
-
-func (m *CaddyfileEditor) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
-	d.Next()
-
-	if !d.NextArg() {
-		return d.ArgErr()
-	}
-
-	m.AuthMethod = d.Val()
-
-	switch m.AuthMethod {
-	case "bcrypt":
-		if !d.NextArg() {
-			return d.ArgErr()
-		}
-
-		m.AdminPasswordHash = d.Val()
-
-		if !strings.HasPrefix(m.AdminPasswordHash, "$2") {
-			return fmt.Errorf("not a bcrypt hash")
-		}
-
-	case "no_password":
-		break
-	default:
-		return d.ArgErr()
-	}
-
-	if m.AuthMethod == "bcrypt" && m.AdminPasswordHash == "" {
-		return d.ArgErr()
-	}
-
-	return nil
-}
-
-var (
-	_ caddy.Provisioner           = (*CaddyfileEditor)(nil)
-	_ caddy.Validator             = (*CaddyfileEditor)(nil)
-	_ caddyhttp.MiddlewareHandler = (*CaddyfileEditor)(nil)
-	_ caddyfile.Unmarshaler       = (*CaddyfileEditor)(nil)
-)
-
-func (c *CaddyfileEditor) basicAuth(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		user, pass, ok := r.BasicAuth()
-
-		passOK := bcrypt.CompareHashAndPassword([]byte(c.AdminPasswordHash), []byte(pass)) == nil
-		userOK := subtle.ConstantTimeCompare([]byte(user), []byte("admin")) == 1
-
-		if !ok || !userOK || !passOK {
-			w.Header().Set("WWW-Authenticate", `Basic realm="restricted", charset="UTF-8"`)
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
-			return
-		}
-
-		next.ServeHTTP(w, r)
-	})
 }
 
 type AdaptResult struct {
@@ -263,23 +197,23 @@ func (a *CaddyfileEditor) AdaptCaddyfile(caddyfile_content string) (AdaptResult,
 		out.AdaptError = err.Error()
 	} else {
 
-		hasValidAdminPanel := false
+		hasCaddyfileEditorDirective := false
 
-		// check if config contains atleast one admin_panel directive
-		// that is not commented out, else warn user over possibly losing access
+		// check if config contains atleast one caddyfile_editor directive that is not commented out
+		// else warn user over possibly losing access
 		for line := range strings.SplitSeq(caddyfile_content, "\n") {
-			if before, _, found := strings.Cut(line, "admin_panel"); found && !strings.ContainsRune(before, '#') {
-				hasValidAdminPanel = true
+			if before, _, found := strings.Cut(line, "caddyfile_editor"); found && !strings.ContainsRune(before, '#') {
+				hasCaddyfileEditorDirective = true
 				break
 			}
 		}
 
-		if !hasValidAdminPanel {
+		if !hasCaddyfileEditorDirective {
 			out.Warnings = append(out.Warnings, caddyconfig.Warning{
 				File:      "Caddyfile",
 				Line:      0,
 				Directive: "HACK_WHOLEFILE",
-				Message:   "no valid admin_panel directive present, possible self-lockout if applied!",
+				Message:   "no valid caddyfile_editor directive present, possible self-lockout if applied!",
 			})
 		}
 

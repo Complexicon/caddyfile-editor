@@ -1,7 +1,10 @@
 http://localhost:3000 {
-	admin_panel bcrypt "$2a$12$Wv9hQoMf3AIa5qEdwd/95uq0oyJacFTD03/cMKnBAQ0zm54ovS/9K" # caddy
+	caddyfile_editor
 }
 
 http://localhost:3001 {
-	admin_panel no_password
+	basic_auth {
+		admin "$2a$12$Wv9hQoMf3AIa5qEdwd/95uq0oyJacFTD03/cMKnBAQ0zm54ovS/9K" # caddy
+	}
+	caddyfile_editor
 }

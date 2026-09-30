@@ -1,3 +1,8 @@
+/**
+ * derived from https://github.com/caddyserver/vscode-caddyfile
+ * MIT License
+ */
+
 type Monaco = typeof import('monaco-editor');
 import type { editor } from 'monaco-editor';
 import type { languages } from 'monaco-editor';

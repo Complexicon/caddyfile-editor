@@ -11,10 +11,9 @@ This Project should be relatively stable, but it's mostly encouraged for home us
 - **Real-Time Validation**: Validates your Caddyfile syntax as you type with live error/warning feedback
 - **Syntax Highlighting**: Full syntax highlighting for Caddyfile language using Monaco Editor
 - **Safety Features**: 
-  - Warns when `admin_panel` directive is missing or commented out (prevents self-lockout)
+  - Warns when `caddyfile_editor` directive is missing or commented out (prevents self-lockout)
   - Configuration adaptation validation before applying
   - Confirmation prompts before applying changes
-- **Authentication**: Optional bcrypt-based HTTP Basic Auth for ""secure"" access
 - **Configuration Management**:
   - Load the last known working Caddyfile
   - Download your configuration
@@ -57,23 +56,22 @@ go build cmd/test
 
 ### Basic Configuration
 
-Add the `admin_panel` directive to your Caddyfile:
+Add the `caddyfile_editor` directive to your Caddyfile:
 
 ```
-# Set module load order (optional, recommended)
-{
-    order admin_panel before respond
-}
 
 http://localhost:4000 {
-    admin_panel no_password
+    caddyfile_editor
 }
 
 # or using authentication
 
 http://localhost:4001 {
-	# replace the bcrypt hash with your own, username always is admin
-    admin_panel bcrypt "$2a$12$Wv9hQoMf3AIa5qEdwd/95uq0oyJacFTD03/cMKnBAQ0zm54ovS/9K"
+  	basic_auth {
+		  # Username "Bob", password "hiccup"
+      Bob $2a$14$Zkx19XLiW6VYouLHR5NmfOFU0z2GTNmpkT/5qqR7hx4IjWJPDhjvG
+    }
+    caddyfile_editor
 }
 
 ```

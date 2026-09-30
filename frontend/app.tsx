@@ -1,18 +1,45 @@
-import type { App } from '@/gotypes';
-import Client from '@/spark/client';
+import { installCaddyfileLang } from '@/caddyfile-lang';
+import { monaco, Monaco } from '@/Monaco';
 import '@/spark/debug';
-import '@fortawesome/fontawesome-free/css/all.css';
+import { preferenceSignal, ThemeToggle } from '@/spark/themes';
+import { css } from '@/spark/util';
 import { computed, signal, useSignal } from '@preact/signals';
-import 'bootstrap/dist/css/bootstrap.css';
 import { editor, type MarkerSeverity } from 'monaco-editor';
 import { render } from 'preact';
-import { installCaddyfileLang } from './caddyfile-lang';
-import { monaco, Monaco } from './components/Monaco';
-import { preferenceSignal, ThemeToggle } from './spark/themes';
-import { css } from './spark/util';
 import { useEffect, useRef } from 'preact/hooks';
 
-export const client = Client<App>('/rpc/')
+interface Warning {
+	"file"?: string;
+	"line"?: number /* int */;
+	"directive"?: string;
+	"message"?: string;
+}
+interface AdaptResult {
+	"Warnings": Warning[];
+	"AdaptError"?: string;
+}
+
+function Adapt(content: string): Promise<AdaptResult> {
+	return fetch('/adapt', {
+		method: 'POST',
+		body: content,
+		headers: { 'content-type': 'text/plain' },
+	})
+	.then(v => v.json() as Promise<AdaptResult>)
+}
+
+function Install(content: string) {
+	return fetch('/install', {
+		method: 'POST',
+		body: content,
+		headers: { 'content-type': 'text/plain' },
+	})
+	.then(v => v.ok)
+}
+
+function LastCaddyfile(): Promise<string> {
+	return fetch('/last').then(v => v.text())
+}
 
 function isMobileDevice() {
   return /Mobi|Android|iPhone|iPad|iPod|BlackBerry|Windows Phone/i.test(navigator.userAgent);
@@ -46,7 +73,7 @@ const lastError = signal<string | undefined>('EOF');
 const validCaddyfileConfig = computed(() => !Boolean(lastError.value));
 
 async function validateCaddyfile(content: string, editor: editor.IStandaloneCodeEditor) {
-	const result = await client.AdaptCaddyfile(content);
+	const result = await Adapt(content);
 
 	const markers = [] as editor.IMarkerData[];
 
@@ -117,13 +144,13 @@ function App() {
 	const editor = useRef<editor.IStandaloneCodeEditor>();
 
 	useEffect(() => {
-		client.LastCaddyfile().then(v => initContent.value = v).catch(() => void(0));
+		LastCaddyfile().then(v => initContent.value = v).catch(() => void(0));
 	}, []);
 
 	function saveConfig(caddyfile: string) {
-		if(confirm('save configuration and reload caddy?')) {
-			client.InstallCaddyfile(caddyfile)
-			.then(() => client.LastCaddyfile().then(v => editor.current?.setValue(v)).catch(() => void(0)))
+		if(validCaddyfileConfig.value && confirm('save configuration and reload caddy?')) {
+			Install(caddyfile)
+			.then(() => LastCaddyfile().then(v => editor.current?.setValue(v)).catch(() => void(0)))
 			.catch(alert);
 		}
 	}
@@ -162,7 +189,7 @@ function App() {
 
 					<button
 						class="bg-transparent border-0"
-						onClick={() => confirm('revert to last known working state?') && client.LastCaddyfile().then(v => editor.current?.setValue(v)).catch(() => void(0))}
+						onClick={() => confirm('revert to last known working state?') && LastCaddyfile().then(v => editor.current?.setValue(v)).catch(() => void(0))}
 					>
 						<i title="Restore last known Caddyfile" class="fa-solid fa-rotate-left square clickable" />
 					</button>
